@@ -44,6 +44,8 @@ void setup() {
   analogWrite(PWMA, 0);          // let PWMA=0
   analogWrite(PWMB, 0);          // let PWMB=0
 
+  pinMode(7, INPUT_PULLUP);
+
   TCCR1A = 0; // clear Timer1 control register TCCR1A & B
   TCCR1B = 0;
   TCNT1 = 0; // clear Timer1 counter register
@@ -62,6 +64,8 @@ void loop()
       Serial.read();
     }
   }
+  state = digitalRead(7); // read the pushbutton for which state we should be in
+  
   Serial.print(state);
   if (state == 1){
     // closed loop control mode
@@ -73,7 +77,7 @@ void loop()
     Serial.print("OL");
   }
   PWM(duty_cycle);
-  delay(250);
+  delay(500);
 
   newposition = encoderPos;
   newtime = millis();
