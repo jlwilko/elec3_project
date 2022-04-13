@@ -7,9 +7,6 @@
 #define ENA 2
 #define ENB 3
 
-#define SYS_V 5
-#define ADC_RES 1023
-
 int duty_cycle;
 volatile long encoderPos = 0;
 long newposition;
@@ -19,15 +16,15 @@ unsigned long oldtime = 0;
 long vel; 
 
 int state; // 0 for open loop, 1 for closed loop
+int motor_dir; 
 
-
-// Open Loop Global variables
+// Closed Loop Global variables
 int goal_velocity; // in rpm
 
 //------------------------- setup routine ----------------------------//
 void setup() {
   duty_cycle = 50;
-  state = 0; // start in open loop mode
+  state = 1; // start in closed loop mode
   goal_velocity = 80;
   
   Serial.begin(9600);
@@ -66,14 +63,13 @@ void loop()
     }
   }
 
-  if (state == 0){
-    // open loop control mode
-    
-    duty_cycle = openLoopControl(duty_cycle, vel, goal_velocity);
+  if (state == 1){
+    // closed loop control mode
+    duty_cycle = ClosedLoopControl(duty_cycle, vel, goal_velocity);
     
   }
   PWM(duty_cycle);
-  delay(500);
+  delay(250);
 
   newposition = encoderPos;
   newtime = millis();
@@ -81,26 +77,29 @@ void loop()
   int d_pos = newposition - oldposition;
   int d_t = newtime - oldtime;
 
-  vel = calc_velocity(d_pos, d_t);
+  vel = calc_velocity(d_pos, d_t)*motor_dir;
 
   Serial.print("speed = ");
   Serial.print(vel);
   Serial.print(", duty_cycle = ");
-  Serial.println(duty_cycle);
+  Serial.print(duty_cycle);
+  Serial.print(", goal_speed = ");
+  Serial.println(goal_velocity);
   
   
   oldposition = newposition;
   oldtime = newtime;
 }
 
-int openLoopControl(int duty_cycle, int curr_velocity, int goal_velocity){
+int ClosedLoopControl(int duty_cycle, int curr_velocity, int goal_velocity){
   if (curr_velocity < goal_velocity){
     duty_cycle++;
   }
   else if (curr_velocity > goal_velocity){
     duty_cycle--;
   }
-  return duty_cycle;
+  
+  return constrain(duty_cycle, 0, 100);
 }
 
 
@@ -128,5 +127,11 @@ void PWM(int pwm)
 }
 
 void countPulses(){
+  if (digitalRead(ENB) == LOW){
+    motor_dir = 1;
+  }
+  else {
+    motor_dir = -1;
+  }
   encoderPos++;
 }
