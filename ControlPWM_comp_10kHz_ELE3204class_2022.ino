@@ -18,11 +18,18 @@ unsigned long newtime;
 unsigned long oldtime = 0;
 long vel; 
 
+int state; // 0 for open loop, 1 for closed loop
+
+
+// Open Loop Global variables
+int goal_velocity; // in rpm
 
 //------------------------- setup routine ----------------------------//
 void setup() {
-  duty_cycle = 60;
-
+  duty_cycle = 50;
+  state = 0; // start in open loop mode
+  goal_velocity = 80;
+  
   Serial.begin(9600);
   Serial.println("Working!");
 
@@ -52,23 +59,56 @@ void setup() {
 void loop() 
 {
   if (Serial.available() > 0){
-    duty_cycle = Serial.parseInt();
-    Serial.println(duty_cycle);
+    goal_velocity = Serial.parseInt();
+    Serial.println(goal_velocity);
     while (Serial.available()){
       Serial.read();
     }
   }
+
+  if (state == 0){
+    // open loop control mode
+    
+    duty_cycle = openLoopControl(duty_cycle, vel, goal_velocity);
+    
+  }
   PWM(duty_cycle);
   delay(500);
+
   newposition = encoderPos;
   newtime = millis();
+  
+  int d_pos = newposition - oldposition;
+  int d_t = newtime - oldtime;
 
-  vel = (newposition - oldposition) * 60000/(newtime - oldtime)/12/99;
+  vel = calc_velocity(d_pos, d_t);
+
   Serial.print("speed = ");
-  Serial.println(vel);
+  Serial.print(vel);
+  Serial.print(", duty_cycle = ");
+  Serial.println(duty_cycle);
+  
+  
   oldposition = newposition;
   oldtime = newtime;
-  Serial.println(encoderPos);
+}
+
+int openLoopControl(int duty_cycle, int curr_velocity, int goal_velocity){
+  if (curr_velocity < goal_velocity){
+    duty_cycle++;
+  }
+  else if (curr_velocity > goal_velocity){
+    duty_cycle--;
+  }
+  return duty_cycle;
+}
+
+
+
+long calc_velocity(int d_pos, int d_t){
+  int gear_ratio = 99;
+  int tick_per_rev = 12;
+  return d_pos * 60000 / d_t / tick_per_rev / gear_ratio;
 }
 
 //------------------------- subroutine PWM generate complementary PWM from OCR1A and OCR1B ----------------------------//
