@@ -7,9 +7,6 @@
 #define ENA 2
 #define ENB 3
 
-#define SYS_V 5
-#define ADC_RES 1023
-
 int duty_cycle;
 volatile long encoderPos = 0;
 long newposition;
@@ -18,11 +15,18 @@ unsigned long newtime;
 unsigned long oldtime = 0;
 long vel; 
 
+int state; // 0 for open loop, 1 for closed loop
+int motor_dir;
+
+// Closed Loop Global variables
+int goal_velocity; // in rpm
 
 //------------------------- setup routine ----------------------------//
 void setup() {
-  duty_cycle = 60;
-
+  duty_cycle = 50;
+  state = 0; // start in open loop mode
+  goal_velocity = 80;
+  
   Serial.begin(9600);
   Serial.println("Working!");
 
@@ -32,7 +36,7 @@ void setup() {
   digitalWrite(ENB, HIGH);
 
   attachInterrupt(digitalPinToInterrupt(ENA), countPulses, RISING);
-   
+  
   
   pinMode(PWMA, OUTPUT);          // output PWMA to Q1
   pinMode(PWMB, OUTPUT);          // output PWMB to Q2
@@ -52,23 +56,74 @@ void setup() {
 void loop() 
 {
   if (Serial.available() > 0){
-    duty_cycle = Serial.parseInt();
-    Serial.println(duty_cycle);
+    goal_velocity = Serial.parseInt();
+    Serial.println(goal_velocity);
     while (Serial.available()){
       Serial.read();
     }
   }
+  Serial.print(state);
+  if (state == 1){
+    // closed loop control mode
+    duty_cycle = ClosedLoopControl(duty_cycle, vel, goal_velocity);
+    Serial.print("CL");
+  }
+  else if (state == 0){
+    duty_cycle = OpenLoopControl(duty_cycle, goal_velocity);
+    Serial.print("OL");
+  }
   PWM(duty_cycle);
-  delay(500);
+  delay(250);
+
   newposition = encoderPos;
   newtime = millis();
+  
+  int d_pos = newposition - oldposition;
+  int d_t = newtime - oldtime;
 
-  vel = (newposition - oldposition) * 60000/(newtime - oldtime)/12/99;
+  vel = calc_velocity(d_pos, d_t)*motor_dir;
+
   Serial.print("speed = ");
-  Serial.println(vel);
+  Serial.print(vel);
+  Serial.print(", duty_cycle = ");
+  Serial.print(duty_cycle);
+  Serial.print(", goal_speed = ");
+  Serial.println(goal_velocity);
+  
+  
   oldposition = newposition;
   oldtime = newtime;
-  Serial.println(encoderPos);
+}
+
+int OpenLoopControl(int duty_cycle, int goal_velocity){
+  int reqd_duty = map(goal_velocity, -97, 97, 0, 100);
+
+  if (reqd_duty < duty_cycle){
+    duty_cycle--;
+  }
+  else if (reqd_duty > duty_cycle){
+    duty_cycle++;
+  }
+  return constrain(duty_cycle, 0, 100);
+}
+
+int ClosedLoopControl(int duty_cycle, int curr_velocity, int goal_velocity){
+  if (curr_velocity < goal_velocity){
+    duty_cycle++;
+  }
+  else if (curr_velocity > goal_velocity){
+    duty_cycle--;
+  }
+  
+  return constrain(duty_cycle, 0, 100);
+}
+
+
+
+long calc_velocity(int d_pos, int d_t){
+  int gear_ratio = 99;
+  int tick_per_rev = 12;
+  return d_pos * 60000 / d_t / tick_per_rev / gear_ratio;
 }
 
 //------------------------- subroutine PWM generate complementary PWM from OCR1A and OCR1B ----------------------------//
@@ -88,5 +143,11 @@ void PWM(int pwm)
 }
 
 void countPulses(){
+  if (digitalRead(ENB) == LOW){
+    motor_dir = 1;
+  }
+  else {
+    motor_dir = -1;
+  }
   encoderPos++;
 }
