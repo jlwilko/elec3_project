@@ -16,7 +16,7 @@ unsigned long oldtime = 0;
 long vel; 
 
 int state; // 0 for open loop, 1 for closed loop
-int motor_dir; 
+int motor_dir;
 
 // Closed Loop Global variables
 int goal_velocity; // in rpm
