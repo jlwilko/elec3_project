@@ -24,7 +24,7 @@ int goal_velocity; // in rpm
 //------------------------- setup routine ----------------------------//
 void setup() {
   duty_cycle = 50;
-  state = 1; // start in closed loop mode
+  state = 0; // start in open loop mode
   goal_velocity = 80;
   
   Serial.begin(9600);
@@ -36,7 +36,7 @@ void setup() {
   digitalWrite(ENB, HIGH);
 
   attachInterrupt(digitalPinToInterrupt(ENA), countPulses, RISING);
-   
+  
   
   pinMode(PWMA, OUTPUT);          // output PWMA to Q1
   pinMode(PWMB, OUTPUT);          // output PWMB to Q2
@@ -62,11 +62,15 @@ void loop()
       Serial.read();
     }
   }
-
+  Serial.print(state);
   if (state == 1){
     // closed loop control mode
     duty_cycle = ClosedLoopControl(duty_cycle, vel, goal_velocity);
-    
+    Serial.print("CL");
+  }
+  else if (state == 0){
+    duty_cycle = OpenLoopControl(duty_cycle, goal_velocity);
+    Serial.print("OL");
   }
   PWM(duty_cycle);
   delay(250);
@@ -89,6 +93,18 @@ void loop()
   
   oldposition = newposition;
   oldtime = newtime;
+}
+
+int OpenLoopControl(int duty_cycle, int goal_velocity){
+  int reqd_duty = map(goal_velocity, -97, 97, 0, 100);
+
+  if (reqd_duty < duty_cycle){
+    duty_cycle--;
+  }
+  else if (reqd_duty > duty_cycle){
+    duty_cycle++;
+  }
+  return constrain(duty_cycle, 0, 100);
 }
 
 int ClosedLoopControl(int duty_cycle, int curr_velocity, int goal_velocity){
