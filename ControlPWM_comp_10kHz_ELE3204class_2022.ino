@@ -1,35 +1,31 @@
 // This code is to generate a pair of complemenatry PWM pulse using Timer 1 registers. The register ICR1 is for frequency,  currently of 100  for 10kHz.
 //The duty is determined by the register OCR1A and OCR1B. The two PWM signals are out of pin9 and pin10, with duty of 30% and 70%. 
 //Check details on Timer 1 registers from the datasheet of ATMega328 page113.
+#define PWMA 9 // yellow
+#define PWMB 10 // orange
+#define ENA 2 // yellow
+#define ENB 3 // white
 
-#define PWMA 9
-#define PWMB 10
-#define ENA 2
-#define ENB 3
+#define MODEBUTTON 7
+#define EMERGENCY_STOP 6
 
-int duty_cycle;
 volatile long encoderPos = 0;
-long newposition;
-long oldposition = 0;
-unsigned long newtime;
-unsigned long oldtime = 0;
-long vel; 
 
-int state; // 0 for open loop, 1 for closed loop
-int motor_dir;
+volatile int motor_dir = 1;
 
-// Closed Loop Global variables
-int goal_velocity; // in rpm
+enum ControlMode{
+  OPENLOOP,
+  CLOSEDLOOP,
+  STOPPED
+};
 
-//------------------------- setup routine ----------------------------//
+ControlMode controlmode = ControlMode::OPENLOOP;
+
 void setup() {
-  duty_cycle = 50;
-  state = 0; // start in open loop mode
-  goal_velocity = 80;
-  
+  // put your setup code here, to run once:
   Serial.begin(9600);
-  Serial.println("Working!");
-
+  Serial.println("working");
+  
   pinMode(ENB, INPUT); // encoder B pin 
   pinMode(ENA, INPUT);// encode A pin
   digitalWrite(ENA, HIGH); // enable pullup
@@ -44,7 +40,8 @@ void setup() {
   analogWrite(PWMA, 0);          // let PWMA=0
   analogWrite(PWMB, 0);          // let PWMB=0
 
-  pinMode(7, INPUT_PULLUP);
+  pinMode(EMERGENCY_STOP, INPUT_PULLUP);
+  pinMode(MODEBUTTON, INPUT_PULLUP);
 
   TCCR1A = 0; // clear Timer1 control register TCCR1A & B
   TCCR1B = 0;
@@ -54,9 +51,12 @@ void setup() {
   ICR1 = 100;//  phase correct PWM. PWM frequency determined by counting up 0-100 and counting down 100-0 in the input compare register (ICR1), so freq=200*0.5us=10kHz 
 }
 
-//------------------------- main loop ----------------------------//
-void loop() 
-{
+void loop() {
+  // put your main code here, to run repeatedly:
+  static int goal_velocity = 0;
+  static int duty_cycle = 50;
+
+  
   if (Serial.available() > 0){
     goal_velocity = Serial.parseInt();
     Serial.println(goal_velocity);
@@ -64,67 +64,122 @@ void loop()
       Serial.read();
     }
   }
-  state = digitalRead(7); // read the pushbutton for which state we should be in
+
+  controlmode = readControlModeButton();
+  if (digitalRead(EMERGENCY_STOP)){
+    controlmode = ControlMode::STOPPED;
+  }
   
-  Serial.print(state);
-  if (state == 1){
-    // closed loop control mode
-    duty_cycle = ClosedLoopControl(duty_cycle, vel, goal_velocity);
-    Serial.print("CL");
+  switch (controlmode){
+    
+  case ControlMode::OPENLOOP:
+    duty_cycle = openLoopControl(duty_cycle, goal_velocity);
+    break;
+
+  case ControlMode::CLOSEDLOOP:
+    duty_cycle = closedLoopControl(duty_cycle, goal_velocity);
+    break;
+
+  case ControlMode::STOPPED:
+    duty_cycle = 50;
+    break;
+
+  default:
+    Serial.println("Error: Illegal Mode");
   }
-  else if (state == 0){
-    duty_cycle = OpenLoopControl(duty_cycle, goal_velocity);
-    Serial.print("OL");
-  }
+
+
   PWM(duty_cycle);
-  delay(500);
 
-  newposition = encoderPos;
-  newtime = millis();
-  
-  int d_pos = newposition - oldposition;
-  int d_t = newtime - oldtime;
-
-  vel = calc_velocity(d_pos, d_t)*motor_dir;
-
-  Serial.print("speed = ");
-  Serial.print(vel);
-  Serial.print(", duty_cycle = ");
-  Serial.print(duty_cycle);
-  Serial.print(", goal_speed = ");
-  Serial.println(goal_velocity);
-  
-  
-  oldposition = newposition;
-  oldtime = newtime;
+ 
 }
 
-int OpenLoopControl(int duty_cycle, int goal_velocity){
-  int reqd_duty = map(goal_velocity, -97, 97, 0, 100);
-
-  if (reqd_duty < duty_cycle){
-    duty_cycle--;
-  }
-  else if (reqd_duty > duty_cycle){
-    duty_cycle++;
-  }
-  return constrain(duty_cycle, 0, 100);
-}
-
-int ClosedLoopControl(int duty_cycle, int curr_velocity, int goal_velocity){
-  if (curr_velocity < goal_velocity){
-    duty_cycle++;
-  }
-  else if (curr_velocity > goal_velocity){
-    duty_cycle--;
-  }
+int closedLoopControl(int duty_cycle, int goal_velocity){
+  static unsigned long last_updated = millis();
+  static unsigned long oldTime = millis();
   
-  return constrain(duty_cycle, 0, 100);
+  int dt = 100;
+  static int oldPos = 0;
+
+  
+
+  if (millis() - last_updated > dt){
+    Serial.print("Doing closed loop - ");    
+
+    int encoder_ticks = encoderPos - oldPos;
+    unsigned long time_elapsed = millis() - last_updated;
+    
+    oldPos = encoderPos;
+
+    int curr_velocity = calc_velocity(encoder_ticks, time_elapsed)*motor_dir;
+    
+    if (curr_velocity < goal_velocity){
+      duty_cycle++;
+    }
+    else if (curr_velocity > goal_velocity){
+      duty_cycle--;
+    }
+    Serial.print("Velocity = ");
+    Serial.print(curr_velocity);
+    Serial.print(" Duty Cycle = ");
+    Serial.print(duty_cycle);
+    Serial.print(" Goal Velocity = ");
+    Serial.println(goal_velocity);    
+    last_updated = millis();
+    return constrain(duty_cycle, 0, 100);
+  }
+  else {
+    return duty_cycle;
+  }
+
 }
 
+int openLoopControl(int duty_cycle, int goal_velocity){
+  static unsigned long last_updated = millis();
+  static int oldPos = 0; 
+  int dt = 300;
 
+  if (millis() - last_updated > dt){
+    Serial.print("Doing open loop - ");
 
-long calc_velocity(int d_pos, int d_t){
+    int reqd_duty = map(goal_velocity, -97, 97, 0, 100);
+
+    int encoder_ticks = encoderPos - oldPos;
+    oldPos = encoderPos;
+    unsigned long time_elapsed = millis() - last_updated;
+
+    int curr_velocity = calc_velocity(encoder_ticks, time_elapsed)*motor_dir;
+
+    if (reqd_duty < duty_cycle){
+      duty_cycle--;
+    }
+    else if (reqd_duty > duty_cycle){
+      duty_cycle++;
+    }
+    Serial.print("Velocity = ");
+    Serial.print(curr_velocity);
+    Serial.print(" Duty Cycle = ");
+    Serial.print(duty_cycle);
+    Serial.print(" Goal Velocity = ");
+    Serial.println(goal_velocity);
+    last_updated = millis();
+    return constrain(duty_cycle, 0, 100);
+  }
+  else {
+    return duty_cycle;
+  }
+}
+
+ControlMode readControlModeButton(void){
+  if (digitalRead(MODEBUTTON) == HIGH){
+    return ControlMode::OPENLOOP;
+  }
+  else {
+    return ControlMode::CLOSEDLOOP;
+  }
+}
+
+long calc_velocity(int d_pos, unsigned long d_t){
   int gear_ratio = 99;
   int tick_per_rev = 12;
   return d_pos * 60000 / d_t / tick_per_rev / gear_ratio;
